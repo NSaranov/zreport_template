@@ -6,3 +6,784 @@ INCLUDE zREPORT_MAIN_cld. " Определения классов
 INCLUDE zREPORT_MAIN_evn. " События
 INCLUDE zREPORT_MAIN_cli. " Реализация классов
 INCLUDE zREPORT_MAIN_mod. " PBO/PAI модули
+
+
+
+*********************************INCLUDE zREPORT_MAIN_top.
+DATA: gv_ok_code TYPE syucomm,
+      gv_save_ok LIKE gv_ok_code.
+
+*********************************INCLUDE zREPORT_MAIN_cld
+*----------------------------------------------------------------------*
+*       CLASS lcl_view DEFINITION
+*----------------------------------------------------------------------*
+*  Класс представление - ALV
+*----------------------------------------------------------------------*
+CLASS lcl_view DEFINITION FINAL.
+  PUBLIC SECTION.
+    CONSTANTS:
+      BEGIN OF mc_functions,
+        back    TYPE syucomm VALUE 'BACK',
+        exit    TYPE syucomm VALUE 'EXIT',
+        log     TYPE syucomm VALUE 'LOG',
+        process TYPE syucomm VALUE 'PROCESS',
+        check   TYPE syucomm VALUE 'CHECK',
+      END OF mc_functions.
+
+    CONSTANTS:
+      BEGIN OF mc_alv,
+        container TYPE char30 VALUE 'C_MAIN',
+        struct    TYPE tabname VALUE 'ZSTRUCT_TABNAME', <<<<<<<<<<<<<<<<<<<<<<<<
+        handle    TYPE disvariant-handle VALUE '0001',
+      END OF mc_alv.
+
+    METHODS:
+      constructor IMPORTING io_dm TYPE REF TO zcl_model, <<<<<<<<<<<<<<<<<<<<
+
+      pbo_screen,
+
+      pai_screen IMPORTING iv_ucomm TYPE sy-ucomm,
+
+      show,
+
+      exit.
+  PRIVATE SECTION.
+    METHODS:
+      alv_refresh IMPORTING io_alv TYPE REF TO cl_gui_alv_grid,
+
+      alv_init_cont,
+
+      alv_init_grid,
+
+      alv_handle_toolbar FOR EVENT toolbar OF cl_gui_alv_grid
+        IMPORTING e_object sender,
+
+      alv_handle_user_command FOR EVENT user_command OF cl_gui_alv_grid
+        IMPORTING e_ucomm sender,
+
+      alv_handle_double_click FOR EVENT double_click OF cl_gui_alv_grid
+        IMPORTING e_row e_column sender ##needed,
+
+      alv_handle_hotspot_click FOR EVENT hotspot_click OF cl_gui_alv_grid
+        IMPORTING e_row_id e_column_id  es_row_no sender ##needed,
+
+      alv_handle_data_changed FOR EVENT data_changed OF cl_gui_alv_grid
+        IMPORTING er_data_changed e_onf4 e_onf4_before e_onf4_after e_ucomm sender,
+
+      alv_handle_f4 FOR EVENT onf4 OF cl_gui_alv_grid
+        IMPORTING sender e_fieldname e_fieldvalue es_row_no er_event_data et_bad_cells e_display ,
+
+      set_handler IMPORTING io_alv TYPE REF TO cl_gui_alv_grid,
+
+      get_fcat IMPORTING iv_str_name     TYPE tabname
+               RETURNING VALUE(rt_value) TYPE lvc_t_fcat,
+
+      get_excluding IMPORTING io_alv         TYPE REF TO cl_gui_alv_grid
+                    RETURNING VALUE(rt_excl) TYPE ui_functions.
+
+    DATA: mo_model  TYPE REF TO zcl_model,
+          mref_data TYPE REF TO data,
+          mo_log    TYPE REF TO zcl_message_log.
+
+    DATA: mo_cont TYPE REF TO cl_gui_custom_container,
+          mo_alv  TYPE REF TO cl_gui_alv_grid.
+
+ENDCLASS.
+
+
+CLASS lcl_application DEFINITION FINAL.
+  PUBLIC SECTION.
+    CLASS-METHODS:
+      at_selection_screen,
+      at_selection_screen_output,
+      initialization,
+      main.
+
+    CLASS-DATA: mo_model TYPE REF TO zcl_model,
+                mo_view  TYPE REF TO lcl_view.
+ENDCLASS.
+
+
+*********************************INCLUDE zREPORT_MAIN_evn
+
+INITIALIZATION.
+  lcl_application=>initialization( ).
+
+AT SELECTION-SCREEN.
+  lcl_application=>at_selection_screen( ).
+
+AT SELECTION-SCREEN OUTPUT.
+  lcl_application=>at_selection_screen_output( ).
+
+START-OF-SELECTION.
+  lcl_application=>main( ).
+  
+*********************************INCLUDE zREPORT_MAIN_cli
+
+
+CLASS lcl_view IMPLEMENTATION.
+  METHOD constructor.
+    " IMPORTING io_dm TYPE REF TO zcl_*service,
+    mo_model = io_dm.
+
+    mo_log = NEW zcl_message_log( ).
+
+    mref_data = mo_model->data_get( ).
+
+    alv_init_cont( ).
+
+    alv_init_grid( ).
+
+  ENDMETHOD.
+
+  METHOD pbo_screen.
+*    DATA: lt_excl TYPE TABLE OF sy-ucomm.
+
+    SET PF-STATUS 'PF9000_MAIN'." EXCLUDING lt_excl.
+    SET TITLEBAR 'PF9000_MAIN' WITH p_bukrs p_poper p_gjahr .
+  ENDMETHOD.
+
+  METHOD pai_screen.
+    " IMPORTING iv_ucomm TYPE sy-ucomm,
+
+*    FIELD-SYMBOLS: <ls_data> TYPE ZCL_IM_R0800_SERVICE=>t_data.
+    mo_alv->check_changed_data( IMPORTING e_valid   = DATA(lv_valid) ).
+    CHECK lv_valid IS NOT INITIAL.
+
+    CASE iv_ucomm.
+      WHEN mc_functions-process.
+        mo_model->process( ).
+        IF mo_model->mo_log->is_empty( ) = abap_false.
+          mo_model->mo_log->show_log( tags = '' ).
+        ENDIF.
+        alv_refresh( io_alv = mo_alv ).
+      WHEN mc_functions-check.
+        mo_model->process( ix_test_mode = abap_true ).
+        IF mo_model->mo_log->is_empty( ) = abap_false.
+          mo_model->mo_log->show_log( tags = '' ).
+        ENDIF.
+        alv_refresh( io_alv = mo_alv ).
+      WHEN mc_functions-log.
+        mo_model->mo_log->show_log( tags = '' ).
+    ENDCASE.
+
+  ENDMETHOD.
+
+  METHOD alv_refresh.
+    DATA ls_row_no     TYPE lvc_s_roid.
+    DATA ls_row_info   TYPE lvc_s_row.
+    DATA ls_col_info   TYPE lvc_s_col.
+    DATA lt_index_rows TYPE lvc_t_row.
+
+    io_alv->get_scroll_info_via_id(
+      IMPORTING
+        es_row_no   = ls_row_no
+        es_row_info = ls_row_info
+        es_col_info = ls_col_info ).
+
+    io_alv->get_selected_rows(
+      IMPORTING
+        et_index_rows = lt_index_rows ).
+
+    io_alv->get_sort_criteria(
+      IMPORTING
+        et_sort = DATA(lt_sort)
+    ).
+
+    io_alv->get_filter_criteria(
+      IMPORTING
+        et_filter = DATA(lt_filter)
+    ).
+
+    io_alv->refresh_table_display( ).
+
+    io_alv->set_sort_criteria(
+      EXPORTING
+        it_sort                   = lt_sort
+    ).
+
+    io_alv->set_filter_criteria(
+      EXPORTING
+        it_filter                 = lt_filter    " Filter Conditions
+    ).
+
+    io_alv->set_selected_rows(
+        it_index_rows = lt_index_rows ).
+
+* Восстановить позицию прокрутки
+    io_alv->set_scroll_info_via_id(
+        is_row_info = ls_row_info
+        is_col_info = ls_col_info
+        is_row_no   = ls_row_no ).
+  ENDMETHOD.
+
+
+  METHOD show.
+    FIELD-SYMBOLS: <ls_data> TYPE any.
+    ASSIGN mref_data->* TO <ls_data>.
+    CHECK sy-subrc = 0.
+
+    IF <ls_data> IS INITIAL.
+      MESSAGE s002(z) DISPLAY LIKE 'E'.
+      RETURN.
+    ENDIF.
+
+    CALL SCREEN 9000.
+
+  ENDMETHOD.
+
+  METHOD exit.
+*    IF get_mode( ) = mc_mode-ord.
+*      mo_model->dequeue_eban( ).
+*    ENDIF.
+*    mo_model->dequeue_obj( ).
+    LEAVE TO SCREEN 0.
+
+  ENDMETHOD.
+
+  METHOD alv_init_cont.
+    CREATE OBJECT mo_cont
+      EXPORTING
+        container_name = mc_alv-container
+      EXCEPTIONS
+        OTHERS         = 6.
+    IF sy-subrc <> 0.
+      MESSAGE ID sy-msgid TYPE sy-msgty NUMBER sy-msgno
+                 WITH sy-msgv1 sy-msgv2 sy-msgv3 sy-msgv4.
+    ENDIF.
+
+  ENDMETHOD.
+
+  METHOD alv_init_grid.
+
+    mo_alv = NEW cl_gui_alv_grid( i_parent = mo_cont ).
+
+    DATA(ls_layout) = VALUE lvc_s_layo( sel_mode = 'A'  stylefname = 'TECH_ROWSTYLE'
+                                        "info_fname = 'TECH_LINECOLOR' ctab_fname = 'COLORTAB'
+    ).
+
+
+    DATA(ls_variant)  = VALUE disvariant( report = sy-repid handle = mc_alv-handle  username = sy-uname ). "variant = p_vari ).
+    DATA(lt_fcat)     = get_fcat( EXPORTING iv_str_name   = mc_alv-struct ).
+
+    set_handler( mo_alv ).
+
+    DATA(lt_excl) = get_excluding( mo_alv ).
+
+    FIELD-SYMBOLS: <ls_data> TYPE zcl_model=>t_data.
+    ASSIGN mref_data->* TO <ls_data>.
+    CHECK sy-subrc = 0.
+
+    mo_alv->set_table_for_first_display(
+      EXPORTING
+        is_variant                    = ls_variant
+        i_save                        = 'A'
+        is_layout                     = ls_layout
+        it_toolbar_excluding          = lt_excl
+      CHANGING
+        it_outtab                     = <ls_data>-t_item
+        it_fieldcatalog               = lt_fcat
+      EXCEPTIONS
+        OTHERS                        = 4 ).
+    IF sy-subrc <> 0.
+      MESSAGE ID sy-msgid TYPE sy-msgty NUMBER sy-msgno
+                 WITH sy-msgv1 sy-msgv2 sy-msgv3 sy-msgv4.
+    ENDIF.
+
+    mo_alv->register_edit_event( EXPORTING   i_event_id = cl_gui_alv_grid=>mc_evt_enter    " Event ID
+                                 EXCEPTIONS  error      = 1 OTHERS     = 2     ).
+    mo_alv->register_edit_event( EXPORTING   i_event_id = cl_gui_alv_grid=>mc_evt_modified   " Event ID
+                                 EXCEPTIONS  error      = 1 OTHERS     = 2     ).
+  ENDMETHOD.
+
+  METHOD alv_handle_toolbar.
+*        IMPORTING e_object sender,
+*    APPEND VALUE #(
+*      butn_type = cntb_btype_sep
+*    ) TO e_object->mt_toolbar.
+*
+*    APPEND VALUE #(
+*          function = mc_functions-select_all
+*          butn_type = cntb_btype_button
+*          icon = icon_select_all
+**          text = TEXT-u01
+*          quickinfo = TEXT-u01
+**          disabled = boolc( mo_model->is_active( ) = abap_false )
+*        ) TO e_object->mt_toolbar.
+*
+*    APPEND VALUE #(
+*          function = mc_functions-deselect_all
+*          butn_type = cntb_btype_button
+*          icon = icon_deselect_all
+**          text = TEXT-u01
+*          quickinfo = TEXT-u02
+**          disabled = boolc( mo_model->is_active( ) = abap_false )
+*        ) TO e_object->mt_toolbar.
+
+*    APPEND VALUE #(
+*      butn_type = cntb_btype_sep
+*    ) TO e_object->mt_toolbar.
+*
+*    CASE sender.
+*      WHEN mo_alv_main.
+**        Создать заказ
+*        APPEND VALUE #(
+*          function = mc_functions-create_ord
+*          butn_type = cntb_btype_button
+*          icon = icon_create
+*          text = TEXT-u01
+*          quickinfo = TEXT-u01
+**          disabled = boolc( mo_model->is_active( ) = abap_false )
+*        ) TO e_object->mt_toolbar.
+*      WHEN mo_alv_gtd.
+*
+*      WHEN mo_alv_ord.
+**         Лог
+*        APPEND VALUE #(
+*          function = mc_functions-log
+*          butn_type = cntb_btype_button
+*          icon = icon_error_protocol
+*          text = TEXT-u02
+*          quickinfo = TEXT-u02
+*        ) TO e_object->mt_toolbar.
+**         Проверить
+*        APPEND VALUE #(
+*          function = mc_functions-check
+*          butn_type = cntb_btype_button
+*          icon = icon_check
+*          text = TEXT-u03
+*          quickinfo = TEXT-u03
+*        ) TO e_object->mt_toolbar.
+**         Сохранить
+*        APPEND VALUE #(
+*          function = mc_functions-check
+*          butn_type = cntb_btype_button
+*          icon = icon_system_save
+*          text = TEXT-u04
+*          quickinfo = TEXT-u04
+*        ) TO e_object->mt_toolbar.
+*    ENDCASE.
+
+
+  ENDMETHOD.
+
+  METHOD alv_handle_user_command.
+*        IMPORTING e_ucomm sender,
+
+*    FIELD-SYMBOLS: <ls_data> TYPE zcl_model=>t_data.
+*    ASSIGN mref_data->* TO <ls_data>.
+*    CHECK sy-subrc = 0.
+*
+*    CASE e_ucomm.
+*      WHEN mc_functions-select_all.
+*        mo_alv->get_filtered_entries( IMPORTING et_filtered_entries = DATA(lt_filt) ).
+*        LOOP AT <ls_data>-t_alv ASSIGNING FIELD-SYMBOL(<ls_alv>).
+*          READ TABLE lt_filt ASSIGNING FIELD-SYMBOL(<ls_filt>) WITH KEY table_line = sy-tabix.
+*          CHECK sy-subrc <> 0.
+*          CHECK zcl_im_r0802_model=>if_field_is_enabled( iv_name = 'INDICAT' is_item = <ls_alv> ) = abap_true.
+*          <ls_alv>-indicat = abap_true.
+*        ENDLOOP.
+*        alv_refresh( io_alv = mo_alv ).
+*
+*      WHEN mc_functions-deselect_all.
+*        LOOP AT <ls_data>-t_alv ASSIGNING <ls_alv>.
+*          <ls_alv>-indicat = abap_false.
+*        ENDLOOP.
+*        alv_refresh( io_alv = mo_alv ).
+*
+*    ENDCASE.
+
+*    CASE sender.
+*      WHEN mo_alv_main.
+*        CASE e_ucomm.
+*          WHEN mc_functions-create_ord.
+*            mo_alv_main->check_changed_data( ).
+*            mo_model->prepare_ord( ).
+*            IF mo_model->mo_log->is_error_exist( ) = abap_true.
+*              mo_model->mo_log->show_log( ).
+*              RETURN.
+*            ENDIF.
+*            me->show( mc_mode-ord ).
+*        ENDCASE.
+*      WHEN mo_alv_gtd.
+*
+*      WHEN mo_alv_ord.
+*        CASE e_ucomm.
+*          WHEN mc_functions-log.
+*            mo_model->mo_log->show_log( ).
+*
+*          WHEN mc_functions-save.
+*            mo_model->process_ord_docs( ix_test = abap_false ).
+*            mo_model->mo_log->show_log( ).
+*            LEAVE TO SCREEN 0.
+*          WHEN mc_functions-check.
+*            mo_model->process_ord_docs( ix_test = abap_true ).
+*            mo_model->mo_log->show_log( ).
+*        ENDCASE.
+*    ENDCASE.
+
+  ENDMETHOD.
+
+  METHOD alv_handle_double_click.
+*        IMPORTING e_row e_column sender##needed,
+    FIELD-SYMBOLS: <ls_data> TYPE zcl_co_r0155_model=>t_data.
+    ASSIGN mref_data->* TO <ls_data>.
+    CHECK sy-subrc = 0.
+
+    READ TABLE <ls_data>-t_item INTO DATA(ls_item) INDEX e_row-index.
+    CHECK sy-subrc = 0.
+
+*    CASE abap_true.
+*      WHEN x_max.
+*        FIELD-SYMBOLS: <lt_data_max> TYPE zcl_fi_r0171_model=>tt_data_max.
+*        ASSIGN mref_data->* TO <lt_data_max>.
+*        CHECK sy-subrc = 0.
+*
+*        READ TABLE <lt_data_max> ASSIGNING FIELD-SYMBOL(<ls_data_max>) INDEX e_row-index.
+*      WHEN x_min.
+*        FIELD-SYMBOLS: <lt_data_min> TYPE zcl_fi_r0171_model=>tt_data_min.
+*        ASSIGN mref_data->* TO <lt_data_min>.
+*        CHECK sy-subrc = 0.
+*
+*        READ TABLE <lt_data_min> ASSIGNING FIELD-SYMBOL(<ls_data_min>) INDEX e_row-index.
+*    ENDCASE.
+*    CHECK sy-subrc = 0.
+*
+*
+*    CASE e_column-fieldname.
+*      WHEN 'BELNR_AC'.
+*        SET PARAMETER ID 'BLN' FIELD <ls_data_max>-belnr_ac.
+*        SET PARAMETER ID 'BUK' FIELD <ls_data_max>-rbukrs_ac.
+*        SET PARAMETER ID 'GJR' FIELD <ls_data_max>-gjahr_ac.
+*        CALL TRANSACTION 'FB03' WITH AUTHORITY-CHECK AND SKIP FIRST SCREEN .
+*
+*      WHEN 'PS_POSID_AC'.
+*        SET PARAMETER ID 'PSP' FIELD ''.
+*        SET PARAMETER ID 'PRO' FIELD <ls_data_max>-ps_posid_ac.
+*        SET PARAMETER ID 'ANR' FIELD ''.
+*        CALL TRANSACTION 'CJ20N' WITH AUTHORITY-CHECK AND SKIP FIRST SCREEN .
+*
+*      WHEN 'ANLN1_AC' OR 'ANLN2_AC'.
+*        SET PARAMETER ID 'AN1' FIELD <ls_data_max>-anln1_ac.
+*        SET PARAMETER ID 'AN2' FIELD <ls_data_max>-anln2_ac.
+*        SET PARAMETER ID 'BUK' FIELD <ls_data_max>-rbukrs_ac.
+*        CALL TRANSACTION 'AS03' WITH AUTHORITY-CHECK AND SKIP FIRST SCREEN .
+*
+*      WHEN 'EBELN_AC' OR 'EBELP_AC'.
+*        SET PARAMETER ID 'BES' FIELD <ls_data_max>-ebeln_ac.
+*        CALL TRANSACTION 'ME23N' WITH AUTHORITY-CHECK AND SKIP FIRST SCREEN .
+*
+*      WHEN 'ZUONR_AC'.
+*        DATA(lv_case_guid) = zcl_rcm_helper=>get_guid_for_key( CONV #( <ls_data_max>-zuonr_ac ) ).
+*        IF NOT lv_case_guid IS INITIAL.
+*          zcl_rcm_case_tool=>open( iv_case_guid   = lv_case_guid
+*                                   iv_organizer   = if_srm=>false
+*                                   iv_navigation  = if_srm=>false ).
+*        ENDIF.
+*
+*      WHEN 'VBELN_AC'.
+**        set parameter id 'AUN' field <ls_data_max>-vbe
+**        set parameter id 'APO' field <line>-posnr.
+**
+**        CALL TRANSACTION 'VA03' WITH AUTHORITY-CHECK AND SKIP FIRST SCREEN .
+*    ENDCASE.
+
+
+  ENDMETHOD.
+
+  METHOD alv_handle_hotspot_click.
+*      E_ROW_ID Type  LVC_S_ROW
+*      E_COLUMN_ID  Type  LVC_S_COL
+*      ES_ROW_NO  Type  LVC_S_ROID
+
+    FIELD-SYMBOLS: <ls_data> TYPE zcl_model=>t_data.
+    ASSIGN mref_data->* TO <ls_data>.
+    CHECK sy-subrc = 0.
+
+    READ TABLE <ls_data>-t_item ASSIGNING FIELD-SYMBOL(<ls_item>) INDEX e_row_id-index.
+    CHECK sy-subrc = 0.
+
+    IF lines( mo_model->mo_log->get_bapiret2_t( tags = <ls_item>-line ) ) > 0.
+      mo_model->mo_log->show_log( EXPORTING tags = <ls_item>-line ).
+    ENDIF.
+  ENDMETHOD.
+
+  METHOD alv_handle_data_changed.
+*        IMPORTING er_data_changed e_onf4 e_onf4_before e_onf4_after e_ucomm sender,
+    FIELD-SYMBOLS: <ls_data> TYPE zcl_model=>t_data.
+    ASSIGN mref_data->* TO <ls_data>.
+    CHECK sy-subrc = 0.
+
+    FIELD-SYMBOLS: <lt_item_mod> TYPE zcl_model=>t_data-t_item.
+    ASSIGN er_data_changed->mp_mod_rows->* TO <lt_item_mod>.
+
+    LOOP AT er_data_changed->mt_good_cells ASSIGNING FIELD-SYMBOL(<ls_good_cell>).
+      READ TABLE <lt_item_mod> ASSIGNING FIELD-SYMBOL(<ls_item_mod>) INDEX <ls_good_cell>-tabix.
+      CHECK sy-subrc = 0.
+
+      CASE <ls_good_cell>-fieldname.
+        WHEN 'PLACCT'.
+          DATA lv_acct TYPE acdoca-racct.
+          lv_acct = <ls_good_cell>-value.
+          IF <ls_item_mod>-corrquan = 'S' AND lv_acct NOT IN zcl_tvarvc=>zco_placct1
+            OR <ls_item_mod>-corrquan = 'H' AND lv_acct NOT IN zcl_tvarvc=>zco_placct2.
+            IF 1 = 2.
+              MESSAGE e001(zco_) WITH <ls_item_mod>-line lv_acct.
+            ENDIF.
+            er_data_changed->add_protocol_entry( EXPORTING i_msgid     = 'ZCO_' i_msgty = 'E' i_msgno = '001'
+                                                           i_fieldname = <ls_good_cell>-fieldname i_row_id    = <ls_good_cell>-row_id
+                                                           i_msgv1     = <ls_item_mod>-line
+                                                           i_msgv2     = lv_acct ).
+            CONTINUE.
+          ENDIF.
+
+      ENDCASE.
+    ENDLOOP.
+
+  ENDMETHOD.
+
+  METHOD alv_handle_f4.
+*        IMPORTING sender e_fieldname e_fieldvalue es_row_no er_event_data et_bad_cells e_display sender,
+  ENDMETHOD.
+
+  METHOD set_handler.
+*  IMPORTING io_alv TYPE REF TO cl_gui_alv_grid,
+    SET HANDLER: alv_handle_toolbar       FOR io_alv,
+                 alv_handle_user_command  FOR io_alv,
+                 alv_handle_double_click  FOR io_alv,
+                 alv_handle_data_changed  FOR io_alv,
+                 alv_handle_f4            FOR io_alv,
+                 alv_handle_hotspot_click FOR io_alv.
+  ENDMETHOD.
+
+  METHOD get_fcat.
+*               IMPORTING iv_str_name TYPE tabname
+*                         iv_curr_view TYPE text10
+*               RETURNING VALUE(rt_value) TYPE lvc_t_fcat,
+
+    CALL FUNCTION 'LVC_FIELDCATALOG_MERGE'
+      EXPORTING
+        i_structure_name       = iv_str_name
+        i_bypassing_buffer     = abap_true
+      CHANGING
+        ct_fieldcat            = rt_value
+      EXCEPTIONS
+        inconsistent_interface = 1
+        program_error          = 2
+        OTHERS                 = 3.
+    IF sy-subrc <> 0.
+      MESSAGE ID sy-msgid TYPE sy-msgty NUMBER sy-msgno
+              WITH sy-msgv1 sy-msgv2 sy-msgv3 sy-msgv4.
+    ENDIF.
+
+    LOOP AT rt_value ASSIGNING FIELD-SYMBOL(<ls_fcat>).
+      CASE <ls_fcat>-fieldname.
+        WHEN 'XPL'.
+          <ls_fcat>-edit      = abap_true.
+          <ls_fcat>-checkbox  = abap_true.
+        WHEN 'PLACCT'.
+          <ls_fcat>-edit      = abap_true.
+        WHEN 'STAT'.
+          <ls_fcat>-hotspot   = abap_true.
+        WHEN 'MWSKZ'.
+          <ls_fcat>-tech      = abap_true.
+      ENDCASE.
+
+    ENDLOOP.
+
+  ENDMETHOD.
+
+  METHOD get_excluding.
+*                    IMPORTING io_alv  TYPE cl_gui_alv_grid
+*                    RETURNING VALUE(rt_excl) TYPE ui_functions.
+    rt_excl = VALUE #( ( cl_gui_alv_grid=>mc_fc_info )
+                       ( cl_gui_alv_grid=>mc_fc_refresh )
+                       ( cl_gui_alv_grid=>mc_fc_check )
+                       ( cl_gui_alv_grid=>mc_fc_detail )
+*                       ( cl_gui_alv_grid=>mc_fc_print )
+                       ( cl_gui_alv_grid=>mc_fc_graph )
+*                       ( cl_gui_alv_grid=>mc_fc_average )
+                       ( cl_gui_alv_grid=>mc_fc_loc_append_row )
+                       ( cl_gui_alv_grid=>mc_fc_loc_delete_row )
+                       ( cl_gui_alv_grid=>mc_fc_loc_copy )
+                       ( cl_gui_alv_grid=>mc_fc_loc_cut )
+                       ( cl_gui_alv_grid=>mc_fc_loc_move_row )
+                       ( cl_gui_alv_grid=>mc_fc_loc_paste )
+                       ( cl_gui_alv_grid=>mc_fc_loc_paste_new_row )
+                       ( cl_gui_alv_grid=>mc_fc_loc_undo )
+                       ( cl_gui_alv_grid=>mc_fc_loc_copy_row )
+                       ( cl_gui_alv_grid=>mc_fc_loc_insert_row )
+*                       ( cl_gui_alv_grid=>mc_fc_sum )
+*                       ( cl_gui_alv_grid=>mc_fc_subtot )
+*                       ( cl_gui_alv_grid=>mc_fc_views )
+*                       ( cl_gui_alv_grid=>mc_fc_variant_admin )
+*                       ( cl_gui_alv_grid=>mc_fc_maximum )
+*                       ( cl_gui_alv_grid=>mc_fc_minimum )
+*                       ( cl_gui_alv_grid=>mc_mb_export )
+                      ).
+  ENDMETHOD.
+
+ENDCLASS.
+
+CLASS lcl_application IMPLEMENTATION.
+
+
+  METHOD at_selection_screen_output.
+    LOOP AT SCREEN.
+      IF   screen-name = 'P_BUKRS'
+        OR screen-name = 'P_GJAHR'
+        OR screen-name = 'P_POPER'.
+        screen-required  = '2'.
+        MODIFY SCREEN.
+      ENDIF.
+    ENDLOOP.
+
+  ENDMETHOD.
+
+  METHOD at_selection_screen.
+*    IF sy-ucomm = 'R1'.
+*      CASE abap_true.
+*        WHEN x_min.
+*          DATA(ls_variant) = VALUE disvariant( report = sy-repid handle = lcl_view=>mc_alv-handle_min  username = sy-uname  ).
+*        WHEN x_max.
+*          ls_variant = VALUE disvariant( report = sy-repid handle = lcl_view=>mc_alv-handle_max  username = sy-uname  ).
+*      ENDCASE.
+*
+*      CALL FUNCTION 'REUSE_ALV_VARIANT_DEFAULT_GET'
+*        EXPORTING
+*          i_save     = abap_true
+*        CHANGING
+*          cs_variant = ls_variant
+*        EXCEPTIONS
+*          not_found  = 2.
+*      IF sy-subrc = 0.
+*        p_vari = ls_variant-variant.
+*      ELSE.
+*        p_vari = ''.
+*      ENDIF.
+*    ENDIF.
+
+  ENDMETHOD.
+
+  METHOD initialization.
+    p_gjahr = sy-datum.
+    p_poper+1 = sy-datum+4(2).
+
+*    CASE abap_true.
+*      WHEN x_min.
+*        DATA(ls_variant) = VALUE disvariant( report = sy-repid handle = lcl_view=>mc_alv-handle_min  username = sy-uname  ).
+*      WHEN x_max.
+*        ls_variant = VALUE disvariant( report = sy-repid handle = lcl_view=>mc_alv-handle_max  username = sy-uname  ).
+*    ENDCASE.
+*
+*    CALL FUNCTION 'REUSE_ALV_VARIANT_DEFAULT_GET'
+*      EXPORTING
+*        i_save     = abap_true
+*      CHANGING
+*        cs_variant = ls_variant
+*      EXCEPTIONS
+*        not_found  = 2.
+*    IF sy-subrc = 0.
+*      p_vari = ls_variant-variant.
+*    ENDIF.
+
+  ENDMETHOD.
+
+*  METHOD f4_var.
+*    "CHANGING cv_var TYPE disvariant-variant,
+*    CASE abap_true.
+*      WHEN x_min.
+*        DATA(ls_variant) = VALUE disvariant( report = sy-repid handle = lcl_view=>mc_alv-handle_min  username = sy-uname  ).
+*      WHEN x_max.
+*        ls_variant = VALUE disvariant( report = sy-repid handle = lcl_view=>mc_alv-handle_max  username = sy-uname  ).
+*    ENDCASE.
+*
+*    DATA: lv_exit.
+*    CALL FUNCTION 'REUSE_ALV_VARIANT_F4'
+*      EXPORTING
+*        is_variant = ls_variant
+*        i_save     = abap_true
+*      IMPORTING
+*        e_exit     = lv_exit
+*        es_variant = ls_variant
+*      EXCEPTIONS
+*        not_found  = 2.
+*    IF sy-subrc = 2.
+*      MESSAGE ID sy-msgid TYPE 'S'      NUMBER sy-msgno
+*              WITH sy-msgv1 sy-msgv2 sy-msgv3 sy-msgv4.
+*    ELSE.
+*      IF lv_exit = space.
+*        cv_var = ls_variant-variant.
+*      ENDIF.
+*    ENDIF.
+*  ENDMETHOD.
+
+  METHOD main.
+
+    IF   p_bukrs IS INITIAL
+      OR p_gjahr IS INITIAL
+      OR p_poper IS INITIAL.
+      MESSAGE s055(00) DISPLAY LIKE 'E'.
+      RETURN.
+    ENDIF.
+
+    AUTHORITY-CHECK OBJECT 'F_BKPF_BUK'
+             ID 'BUKRS' FIELD p_bukrs
+             ID 'ACTVT' FIELD '01'.
+    IF sy-subrc <> 0.
+      MESSAGE s024(zsd) WITH p_bukrs DISPLAY LIKE 'E'.
+      RETURN.
+    ENDIF.
+
+*   Модель
+    mo_model = NEW #( ).
+
+    mo_model->set_criteries( is_criteries = VALUE #(  p_bukrs = p_bukrs
+                                                      p_gjahr = p_gjahr
+                                                      p_poper = p_poper
+                                                      s_werks = s_werks[] ) ).
+    mo_model->data_fetch( ).
+
+    IF cl_gui_alv_grid=>offline( ) IS INITIAL.
+      IF mo_model->mo_log->is_empty( ) = abap_false.
+        mo_model->mo_log->show_log( ).
+      ENDIF.
+
+*  *   Представление
+      mo_view = NEW lcl_view( mo_model ).
+      mo_view->show( ).
+    ELSE.
+      mo_model->process( ).
+      mo_model->mo_log->save_application_log( ).
+    ENDIF.
+  ENDMETHOD.
+
+
+ENDCLASS.
+
+
+*********************************INCLUDE zREPORT_MAIN_mod
+*&---------------------------------------------------------------------*
+*&      Module  PBO_SCREEN  OUTPUT
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+MODULE pbo_screen OUTPUT.
+  lcl_application=>mo_view->pbo_screen( ).
+ENDMODULE.
+
+MODULE pai_screen INPUT.
+
+  gv_save_ok = gv_ok_code.
+  CLEAR gv_ok_code.
+
+  lcl_application=>mo_view->pai_screen( gv_save_ok ).
+ENDMODULE.
+*&---------------------------------------------------------------------*
+*&      Module  0100_PAI_EXIT  INPUT
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+MODULE pai_exit INPUT.
+  lcl_application=>mo_view->exit( ).
+ENDMODULE.
