@@ -1,0 +1,8 @@
+REPORT zreport_main.
+
+INCLUDE zREPORT_MAIN_top.
+INCLUDE zREPORT_MAIN_scr. " Экран выбора
+INCLUDE zREPORT_MAIN_cld. " Определения классов
+INCLUDE zREPORT_MAIN_evn. " События
+INCLUDE zREPORT_MAIN_cli. " Реализация классов
+INCLUDE zREPORT_MAIN_mod. " PBO/PAI модули
