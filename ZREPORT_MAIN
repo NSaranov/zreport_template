@@ -742,6 +742,11 @@ CLASS lcl_application IMPLEMENTATION.
                                                       p_gjahr = p_gjahr
                                                       p_poper = p_poper
                                                       s_werks = s_werks[] ) ).
+    IF mo_model->mo_log->is_error_exist( ) = abap_true.
+      mo_model->mo_log->show_log( ).
+      RETURN.
+    ENDIF.
+    
     mo_model->data_fetch( ).
 
     IF cl_gui_alv_grid=>offline( ) IS INITIAL.
